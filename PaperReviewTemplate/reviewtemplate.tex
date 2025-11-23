@@ -1,0 +1,152 @@
+\documentclass{MLIA} % Include author names
+%\documentclass[anon]{midl} % Anonymized submission
+
+% The following packages will be automatically loaded:
+% jmlr, amsmath, amssymb, natbib, graphicx, url, algorithm2e
+% ifoddpage, relsize and probably more
+% make sure they are installed with your latex distribution
+
+\usepackage{mwe} % to get dummy images
+
+% Header for extended abstracts
+\jmlrproceedings{MIDL}{University of Virginia}
+\jmlrpages{}
+\jmlryear{2021}
+
+% to be uncommented for submissions under review
+\jmlrworkshop{ECE 4501/6501 - CS 4501/6501: Machine Learning in Image Analysis}
+
+
+\title[Short Title]{Full Title of Review}
+
+ % Use \Name{Author Name} to specify the name.
+ % If the surname contains spaces, enclose the surname
+ % in braces, e.g. \Name{John {Smith Jones}} similarly
+ % if the name has a "von" part, e.g \Name{Jane {de Winter}}.
+ % If the first letter in the forenames is a diacritic
+ % enclose the diacritic in braces, e.g. \Name{{\'E}louise Smith}
+
+ % Two authors with the same address
+ % \midlauthor{\Name{Author Name1} \Email{abc@sample.edu}\and
+ %  \Name{Author Name2} \Email{xyz@sample.edu}\\
+ %  \addr Address}
+
+ % Three or more authors with the same address:
+ % \midlauthor{\Name{Author Name1} \Email{an1@sample.edu}\\
+ %  \Name{Author Name2} \Email{an2@sample.edu}\\
+ %  \Name{Author Name3} \Email{an3@sample.edu}\\
+ %  \addr Address}
+
+
+% Authors with different addresses:
+% \midlauthor{\Name{Author Name1} \Email{abc@sample.edu}\\
+% \addr Address 1
+% \AND
+% \Name{Author Name2} \Email{xyz@sample.edu}\\
+% \addr Address 2
+% }
+
+%\footnotetext[1]{Contributed equally}
+
+% More complicate cases, e.g. with dual affiliations and joint authorship
+\midlauthor{\Name{Author Name1} \Email{abc@sample.edu}\\
+\Name{Author Name2} \Email{xyz@sample.edu}\\
+\Name{Author Name3} \Email{alphabeta@example.edu}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This is a great paper and it has a concise abstract.
+\end{abstract}
+
+\begin{keywords}
+List of keywords, comma separated.
+\end{keywords}
+
+\section{Introduction (Author Name1)}
+
+This is the section for problem description, related work and challenge.  Some random notes:
+\begin{itemize}
+\item You should use \LaTeX \cite{Lamport:Book:1989}.
+\item For simplicity, here, \verb|\cite|  defaults to
+  parenthetical citations, i.e. \verb|\citep|. You can of course also
+  use \verb|\citet| for textual citations.
+
+e.g. \figureref{fig:example},  \verb|\tableref| to refer to a table,
+e.g. \tableref{tab:example} and \verb|\equationref| to refer to an equation,
+e.g. \equationref{eq:example}.
+\end{itemize}
+\section{Background (Author Name1, Author Name2)}
+This is where the content of the background goes.  
+
+\section{Methodology (Author Name1, Author Name2, Author Name3)}
+This is where the content of the methodology goes.  
+
+\section{Experiment (Author Name2, Author Name3)}
+This is where the content of the experiment on our provided dataset goes.  
+
+\begin{table}[htbp]
+ % The first argument is the label.
+ % The caption goes in the second argument, and the table contents
+ % go in the third argument.
+\floatconts
+  {tab:example}%
+  {\caption{An Example Table}}%
+  {\begin{tabular}{ll}
+  \bfseries Dataset & \bfseries Result\\
+  Data1 & 0.12345\\
+  Data2 & 0.67890\\
+  Data3 & 0.54321\\
+  Data4 & 0.09876
+  \end{tabular}}
+\end{table}
+
+\begin{figure}[htbp]
+ % Caption and label go in the first argument and the figure contents
+ % go in the second argument
+\floatconts
+  {fig:example}
+  {\caption{Example Image}}
+  {\includegraphics[width=0.5\linewidth]{example-image}}
+\end{figure}
+
+\begin{algorithm2e}
+\caption{Computing Net Activation}
+\label{alg:net}
+ % older versions of algorithm2e have \dontprintsemicolon instead
+ % of the following:
+ %\DontPrintSemicolon
+ % older versions of algorithm2e have \linesnumbered instead of the
+ % following:
+ %\LinesNumbered
+\KwIn{$x_1, \ldots, x_n, w_1, \ldots, w_n$}
+\KwOut{$y$, the net activation}
+$y\leftarrow 0$\;
+\For{$i\leftarrow 1$ \KwTo $n$}{
+  $y \leftarrow y + w_i*x_i$\;
+}
+\end{algorithm2e}
+\section{Discussion (Author Name1, Author Name3)}
+This is where the content of the discussion goes.  
+\section{Conclusion (Author Name3)}
+This is where the content of the conclusion goes.  
+\bibliography{templatesample}
+
+
+\appendix
+
+\section{Proof of Theorem 1}
+
+This is a boring technical proof of
+\begin{equation}\label{eq:example}
+\cos^2\theta + \sin^2\theta \equiv 1.
+\end{equation}
+
+\section{Proof of Theorem 2}
+
+This is a complete version of a proof sketched in the main text.
+
+\end{document}
