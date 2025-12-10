@@ -19,38 +19,27 @@ from sequencer_model import Sequencer2D_S
 from synthetic_data import create_data_loaders as create_synthetic_loaders
 from training_pipeline import Trainer, test_model_prediction
 
-# ============================================================================
-# CONFIGURATION: Switch between synthetic and real data
-# ============================================================================
-USE_SYNTHETIC_DATA = True  # Set to False to use real data
+# Try to import enhanced data loading, fall back to old method if not available
+try:
+    from enhanced_data_loading import load_real_data
+    ENHANCED_LOADING_AVAILABLE = True
+except ImportError:
+    ENHANCED_LOADING_AVAILABLE = False
+    print("Note: Enhanced data loading not available, using basic loading")
 
-# Real data paths (update these when you have real data)
-REAL_DATA_PATH = '2023-11-15-cine-myo-masks-and-TOS.npy'
 
-
-def load_real_data(data_path, train_split=0.8):
+def load_real_data_basic(data_path, train_split=0.8):
     """
-    Load real cardiac data from .npy file
-    
-    Args:
-        data_path: Path to the .npy file
-        train_split: Fraction of data to use for training
-        
-    Returns:
-        train_loader, val_loader: PyTorch DataLoaders
+    Basic data loading (original version)
+    Falls back to this if enhanced_data_loading.py not available
     """
     from torch.utils.data import Dataset, DataLoader
     
     print(f"Loading real data from {data_path}...")
-    
-    # Load data
     data = np.load(data_path, allow_pickle=True)
-    
-    print(f"Total samples in dataset: {len(data)}")
+    print(f"Total samples: {len(data)}")
     
     class RealCardiacDataset(Dataset):
-        """Dataset for real cardiac masks and TOS curves"""
-        
         def __init__(self, data_samples):
             self.data = data_samples
         
@@ -59,60 +48,54 @@ def load_real_data(data_path, train_split=0.8):
         
         def __getitem__(self, idx):
             sample = self.data[idx]
+            mask_volume = sample['cine_lv_myo_masks_cropped']
+            tos_curve = sample['TOS']
             
-            # Get mask volume and TOS
-            mask_volume = sample['cine_lv_myo_masks_cropped']  # (H, W, n_frames)
-            tos_curve = sample['TOS']  # (126,)
-            
-            # For now, use middle frame (can be enhanced later)
-            # Or average across frames, or use max projection
+            # Use middle frame
             middle_frame = mask_volume.shape[2] // 2
             mask_frame = mask_volume[:, :, middle_frame]
             
-            # Convert to tensors
-            mask_tensor = torch.from_numpy(mask_frame).float().unsqueeze(0)  # (1, H, W)
-            tos_tensor = torch.from_numpy(tos_curve).float()  # (126,)
+            mask_tensor = torch.from_numpy(mask_frame).float().unsqueeze(0)
+            tos_tensor = torch.from_numpy(tos_curve).float()
             
             return mask_tensor, tos_tensor
     
-    # Split into train/val
-    num_samples = len(data)
-    num_train = int(num_samples * train_split)
-    
+    num_train = int(len(data) * train_split)
     train_data = data[:num_train]
     val_data = data[num_train:]
     
     print(f"Train samples: {len(train_data)}")
     print(f"Val samples: {len(val_data)}")
     
-    # Create datasets
     train_dataset = RealCardiacDataset(train_data)
     val_dataset = RealCardiacDataset(val_data)
     
-    # Create data loaders
     train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False, num_workers=0)
     
-    return train_loader, val_loader
+    return train_loader, val_loader, 1  # Return num_channels=1
 
 
 def parse_args():
-    """
-    Parse command line arguments
-    
-    Purpose: Allow easy configuration without editing code
-    """
     parser = argparse.ArgumentParser(description='Train Sequencer for Cardiac TOS Prediction')
     
     # Data mode
     parser.add_argument('--real-data', action='store_true',
                        help='Use real data instead of synthetic')
-    parser.add_argument('--data-path', type=str, default=REAL_DATA_PATH,
+    parser.add_argument('--data-path', type=str, 
+                       default='2023-11-15-cine-myo-masks-and-TOS.npy',
                        help='Path to real data .npy file')
     parser.add_argument('--train-split', type=float, default=0.8,
-                       help='Fraction of data for training (real data only)')
+                       help='Fraction of data for training')
     
-    # Synthetic data parameters (only used if not --real-data)
+    # NEW: Temporal processing mode
+    parser.add_argument('--temporal-mode', type=str, 
+                       default='multi_frame',
+                       choices=['single_frame', 'average', 'max_projection', 
+                               'peak_frame', 'multi_frame', 'temporal_stats'],
+                       help='How to process temporal dimension (requires enhanced_data_loading.py)')
+    
+    # Synthetic data parameters
     parser.add_argument('--train-size', type=int, default=80,
                        help='Number of training samples (synthetic only)')
     parser.add_argument('--val-size', type=int, default=20,
@@ -121,12 +104,6 @@ def parse_args():
     # Common parameters
     parser.add_argument('--batch-size', type=int, default=8,
                        help='Batch size for training')
-    
-    # Model parameters
-    parser.add_argument('--in-channels', type=int, default=1,
-                       help='Input channels (1 for grayscale)')
-    parser.add_argument('--num-outputs', type=int, default=126,
-                       help='Number of TOS predictions')
     
     # Training parameters
     parser.add_argument('--num-epochs', type=int, default=50,
@@ -151,22 +128,7 @@ def parse_args():
 
 
 def main():
-    """
-    Main training function
-    
-    Steps:
-    1. Parse arguments
-    2. Set up device
-    3. Create data loaders (synthetic or real)
-    4. Initialize model
-    5. Create trainer
-    6. Train model
-    7. Test predictions
-    """
-    # Parse command line arguments
     args = parse_args()
-    
-    # Override USE_SYNTHETIC_DATA with command line flag
     use_synthetic = not args.real_data
     
     print("=" * 80)
@@ -179,7 +141,7 @@ def main():
     print(f"{'*' * 30}  DATA MODE: {data_mode}  {'*' * (30 - len(data_mode))}")
     print(f"{'*' * 80}")
     
-    # === 1. Device Setup ===
+    # Device setup
     if args.device == 'auto':
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
     else:
@@ -190,55 +152,67 @@ def main():
         print(f"GPU: {torch.cuda.get_device_name(0)}")
         print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
     
-    # === 2. Create Data Loaders ===
+    # Create data loaders
     print(f"\nCreating data loaders...")
     
     if use_synthetic:
         print("📊 Using SYNTHETIC data for testing")
         print(f"  Train samples: {args.train_size}")
         print(f"  Val samples: {args.val_size}")
-        print(f"  Batch size: {args.batch_size}")
         
         train_loader, val_loader = create_synthetic_loaders(
             train_size=args.train_size,
             val_size=args.val_size,
             batch_size=args.batch_size
         )
+        num_channels = 1
+        
     else:
         print("📊 Using REAL data")
         print(f"  Data path: {args.data_path}")
         print(f"  Train split: {args.train_split}")
-        print(f"  Batch size: {args.batch_size}")
         
-        # Check if file exists
         if not Path(args.data_path).exists():
             raise FileNotFoundError(
                 f"Real data file not found: {args.data_path}\n"
-                f"Please update --data-path or use --real-data flag"
+                f"Please check the path or get the file from Canvas/teammates"
             )
         
-        train_loader, val_loader = load_real_data(
-            data_path=args.data_path,
-            train_split=args.train_split
-        )
+        # Use enhanced loading if available, otherwise basic
+        if ENHANCED_LOADING_AVAILABLE:
+            print(f"  Temporal mode: {args.temporal_mode}")
+            train_loader, val_loader, num_channels = load_real_data(
+                data_path=args.data_path,
+                train_split=args.train_split,
+                temporal_mode=args.temporal_mode,
+                batch_size=args.batch_size
+            )
+        else:
+            print("  Temporal mode: single_frame (basic loading)")
+            train_loader, val_loader, num_channels = load_real_data_basic(
+                data_path=args.data_path,
+                train_split=args.train_split
+            )
     
-    # === 3. Initialize Model ===
+    print(f"  Batch size: {args.batch_size}")
+    print(f"  Input channels: {num_channels}")
+    
+    # Initialize model
     print(f"\nInitializing Sequencer2D-S model...")
-    print(f"  Input channels: {args.in_channels}")
-    print(f"  Output dimension: {args.num_outputs}")
+    print(f"  Input channels: {num_channels}")
+    print(f"  Output dimension: 126 (TOS curve)")
     
     model = Sequencer2D_S(
-        in_channels=args.in_channels,
-        num_outputs=args.num_outputs
+        in_channels=num_channels,
+        num_outputs=126
     )
     
-    # Print model summary
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Total parameters: {total_params:,}")
     print(f"  Trainable parameters: {trainable_params:,}")
     
-    # === 4. Create Trainer ===
+    # Create trainer
     print(f"\nSetting up trainer...")
     print(f"  Learning rate: {args.learning_rate}")
     print(f"  Checkpoint directory: {args.checkpoint_dir}")
@@ -252,12 +226,12 @@ def main():
         checkpoint_dir=args.checkpoint_dir
     )
     
-    # === 5. Resume from Checkpoint (Optional) ===
+    # Resume from checkpoint (optional)
     if args.resume:
         print(f"\nResuming from checkpoint: {args.resume}")
         trainer.load_checkpoint(args.resume)
     
-    # === 6. Train Model ===
+    # Train model
     print(f"\nStarting training for {args.num_epochs} epochs...")
     print("=" * 80)
     
@@ -266,9 +240,8 @@ def main():
         save_every=args.save_every
     )
     
-    # === 7. Test Predictions ===
+    # Test predictions
     print("\nTesting predictions on validation set...")
-    
     test_model_prediction(
         model=model,
         val_loader=val_loader,
@@ -283,93 +256,35 @@ def main():
     print("=" * 80)
 
 
-def print_usage_examples():
-    """Print helpful usage examples"""
-    print("""
-╔════════════════════════════════════════════════════════════════════════════╗
-║                            QUICK START                                     ║
-╚════════════════════════════════════════════════════════════════════════════╝
-
-🔹 TEST WITH SYNTHETIC DATA (default):
-  $ python main_training.py
-
-🔹 TRAIN WITH REAL DATA:
-  $ python main_training.py --real-data
-
-🔹 SPECIFY REAL DATA PATH:
-  $ python main_training.py --real-data --data-path path/to/your/data.npy
-
-╔════════════════════════════════════════════════════════════════════════════╗
-║                         EXAMPLE COMMANDS                                   ║
-╚════════════════════════════════════════════════════════════════════════════╝
-
-Quick test with synthetic data (5 epochs):
-  $ python main_training.py --num-epochs 5 --train-size 20 --val-size 5
-
-Train on real data for 100 epochs:
-  $ python main_training.py --real-data --num-epochs 100
-
-Use larger batch size (if you have GPU memory):
-  $ python main_training.py --batch-size 16
-
-Train with different learning rate:
-  $ python main_training.py --learning-rate 5e-4
-
-Resume from checkpoint:
-  $ python main_training.py --resume checkpoints/latest_checkpoint.pth
-
-Force CPU training:
-  $ python main_training.py --device cpu
-
-╔════════════════════════════════════════════════════════════════════════════╗
-║                     SWITCHING FROM SYNTHETIC TO REAL                       ║
-╚════════════════════════════════════════════════════════════════════════════╝
-
-Step 1: Test everything with synthetic data
-  $ python main_training.py --num-epochs 5
-
-Step 2: When you have real data, just add --real-data flag
-  $ python main_training.py --real-data --num-epochs 50
-
-That's it! Everything else stays the same.
-
-╔════════════════════════════════════════════════════════════════════════════╗
-║                         KEY PARAMETERS                                     ║
-╚════════════════════════════════════════════════════════════════════════════╝
-
-Data Mode:
-  --real-data          Use real data instead of synthetic
-  --data-path PATH     Path to .npy file (default: 2023-11-15-cine-myo-masks-and-TOS.npy)
-  --train-split 0.8    Train/val split for real data
-
-Synthetic Data Only:
-  --train-size 80      Number of synthetic training samples
-  --val-size 20        Number of synthetic validation samples
-
-Training:
-  --num-epochs 50      Number of epochs
-  --learning-rate 1e-3 Learning rate
-  --batch-size 8       Batch size
-  
-Device:
-  --device auto        Device: auto/cuda/cpu
-
-Checkpointing:
-  --checkpoint-dir DIR Where to save checkpoints
-  --resume PATH        Resume from checkpoint
-  --save-every 5       Save checkpoint every N epochs
-
-    """)
-
-
 if __name__ == "__main__":
     import sys
     
-    # If --help or -h is passed, show usage examples too
     if '--help' in sys.argv or '-h' in sys.argv:
         parser = argparse.ArgumentParser(description='Train Sequencer for Cardiac TOS Prediction')
         parser.print_help()
-        print_usage_examples()
+        print("""
+
+EXAMPLE USAGE:
+
+1. Quick test with synthetic data:
+   python main_training.py --num-epochs 5
+
+2. Train on real data with single frame (basic):
+   python main_training.py --real-data --num-epochs 50
+
+3. Train on real data with multi-frame (RECOMMENDED):
+   python main_training.py --real-data --temporal-mode multi_frame --num-epochs 100
+
+4. Train with different temporal modes:
+   python main_training.py --real-data --temporal-mode average --num-epochs 50
+   python main_training.py --real-data --temporal-mode peak_frame --num-epochs 50
+   python main_training.py --real-data --temporal-mode temporal_stats --num-epochs 50
+
+5. Resume from checkpoint:
+   python main_training.py --real-data --resume checkpoints/best_model.pth
+
+NOTE: For optimal results, use optimized_experiment_runner.py which automatically
+      tests all temporal modes and finds the best one!
+        """)
     else:
-        # Run training
         main()

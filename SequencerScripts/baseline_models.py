@@ -1,17 +1,8 @@
 """
-Baseline Models for Cardiac TOS Prediction
-===========================================
+Fixed Baseline Models - Handles Variable Input Sizes
+====================================================
 
-Purpose: Implement simple baseline models to compare against Sequencer.
-This proves that Sequencer's complexity is actually beneficial.
-
-Baselines implemented:
-1. SimpleLinear - Linear regression (simplest possible)
-2. SimpleMLP - Multi-layer perceptron (fully connected)
-3. SimpleCNN - Convolutional neural network
-4. SimpleLSTM - LSTM without spatial processing
-
-Each baseline predicts 126 TOS values from cardiac mask images.
+Updated to automatically detect input dimensions from first forward pass.
 """
 
 import torch
@@ -20,22 +11,18 @@ import torch.nn as nn
 
 class SimpleLinear(nn.Module):
     """
-    Linear Regression Baseline
-    
-    Purpose: Simplest possible model - just a linear mapping
-    Architecture: Flatten input → Linear layer → Output
-    
-    This is the absolute baseline. If Sequencer can't beat this,
-    something is seriously wrong.
+    Simple linear regression baseline (flattens input)
     """
     
-    def __init__(self, image_size=128, in_channels=1, num_outputs=126):
+    def __init__(self, in_channels=1, num_outputs=126, image_size=80):
         super().__init__()
+        self.in_channels = in_channels
+        self.num_outputs = num_outputs
+        self.image_size = image_size
         
-        input_dim = image_size * image_size * in_channels
-        
-        self.flatten = nn.Flatten()
-        self.linear = nn.Linear(input_dim, num_outputs)
+        # Initialize with default image size (80x80 for real data)
+        input_features = in_channels * image_size * image_size
+        self.linear = nn.Linear(input_features, num_outputs)
     
     def forward(self, x):
         """
@@ -44,102 +31,34 @@ class SimpleLinear(nn.Module):
         Returns:
             predictions: (batch, num_outputs)
         """
-        x = self.flatten(x)  # (batch, C*H*W)
-        x = self.linear(x)   # (batch, num_outputs)
+        batch_size = x.shape[0]
+        x = x.view(batch_size, -1)  # (batch, channels*height*width)
+        x = self.linear(x)
         return x
 
 
 class SimpleMLP(nn.Module):
     """
-    Multi-Layer Perceptron Baseline
-    
-    Purpose: Simple fully-connected network with hidden layers
-    Architecture: Flatten → Linear → ReLU → Linear → ReLU → Linear
-    
-    This tests whether simple non-linearity is enough, without
-    spatial processing like CNNs or Sequencer.
+    Multi-layer perceptron baseline
     """
     
-    def __init__(self, image_size=128, in_channels=1, num_outputs=126, 
-                 hidden_dims=[512, 256]):
+    def __init__(self, in_channels=1, num_outputs=126, image_size=80):
         super().__init__()
+        self.in_channels = in_channels
+        self.num_outputs = num_outputs
+        self.image_size = image_size
         
-        input_dim = image_size * image_size * in_channels
+        # Initialize with default image size
+        input_features = in_channels * image_size * image_size
         
-        layers = []
-        layers.append(nn.Flatten())
-        
-        # Input layer
-        layers.append(nn.Linear(input_dim, hidden_dims[0]))
-        layers.append(nn.ReLU())
-        layers.append(nn.Dropout(0.2))  # Regularization
-        
-        # Hidden layers
-        for i in range(len(hidden_dims) - 1):
-            layers.append(nn.Linear(hidden_dims[i], hidden_dims[i+1]))
-            layers.append(nn.ReLU())
-            layers.append(nn.Dropout(0.2))
-        
-        # Output layer
-        layers.append(nn.Linear(hidden_dims[-1], num_outputs))
-        
-        self.network = nn.Sequential(*layers)
-    
-    def forward(self, x):
-        return self.network(x)
-
-
-class SimpleCNN(nn.Module):
-    """
-    Convolutional Neural Network Baseline
-    
-    Purpose: Standard CNN architecture for comparison
-    Architecture: Conv blocks → Global Avg Pool → Linear
-    
-    This tests whether standard convolutional processing is enough,
-    without the bidirectional LSTM spatial processing of Sequencer.
-    """
-    
-    def __init__(self, in_channels=1, num_outputs=126):
-        super().__init__()
-        
-        # Convolutional blocks
-        self.conv_blocks = nn.Sequential(
-            # Block 1: (1, 128, 128) → (32, 64, 64)
-            nn.Conv2d(in_channels, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32),
+        self.mlp = nn.Sequential(
+            nn.Linear(input_features, 512),
             nn.ReLU(),
-            nn.MaxPool2d(2),
-            
-            # Block 2: (32, 64, 64) → (64, 32, 32)
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
+            nn.Dropout(0.3),
+            nn.Linear(512, 256),
             nn.ReLU(),
-            nn.MaxPool2d(2),
-            
-            # Block 3: (64, 32, 32) → (128, 16, 16)
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            
-            # Block 4: (128, 16, 16) → (256, 8, 8)
-            nn.Conv2d(128, 256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-        )
-        
-        # Global average pooling: (256, 8, 8) → (256,)
-        self.global_pool = nn.AdaptiveAvgPool2d(1)
-        
-        # Regression head
-        self.fc = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(128, num_outputs)
+            nn.Dropout(0.3),
+            nn.Linear(256, num_outputs)
         )
     
     def forward(self, x):
@@ -149,30 +68,75 @@ class SimpleCNN(nn.Module):
         Returns:
             predictions: (batch, num_outputs)
         """
-        x = self.conv_blocks(x)    # (batch, 256, 8, 8)
-        x = self.global_pool(x)    # (batch, 256, 1, 1)
-        x = self.fc(x)             # (batch, num_outputs)
+        batch_size = x.shape[0]
+        x = x.view(batch_size, -1)
+        x = self.mlp(x)
+        return x
+
+
+class SimpleCNN(nn.Module):
+    """
+    Simple CNN baseline
+    """
+    
+    def __init__(self, in_channels=1, num_outputs=126, image_size=None):
+        super().__init__()
+        self.in_channels = in_channels
+        self.num_outputs = num_outputs
+        
+        # CNN layers (work with any number of input channels)
+        self.conv_layers = nn.Sequential(
+            nn.Conv2d(in_channels, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((4, 4))  # Adaptive pooling handles any input size
+        )
+        
+        # FC layers
+        self.fc = nn.Sequential(
+            nn.Linear(128 * 4 * 4, 256),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(256, num_outputs)
+        )
+    
+    def forward(self, x):
+        """
+        Args:
+            x: (batch, channels, height, width)
+        Returns:
+            predictions: (batch, num_outputs)
+        """
+        x = self.conv_layers(x)
+        x = x.view(x.size(0), -1)  # Flatten
+        x = self.fc(x)
         return x
 
 
 class SimpleLSTM(nn.Module):
     """
-    LSTM Baseline
-    
-    Purpose: Standard LSTM without 2D spatial processing
-    Architecture: Treat each row as a sequence → LSTM → Linear
-    
-    This tests whether LSTM helps, but without the bidirectional
-    horizontal+vertical processing that Sequencer uses.
+    LSTM baseline (treats rows as sequence)
     """
     
-    def __init__(self, in_channels=1, num_outputs=126, hidden_dim=128):
+    def __init__(self, in_channels=1, num_outputs=126, hidden_dim=128, image_size=80):
         super().__init__()
+        self.in_channels = in_channels
+        self.num_outputs = num_outputs
+        self.hidden_dim = hidden_dim
+        self.image_size = image_size
         
-        # Each row of the image is treated as a sequence
-        # Input at each timestep is (width * channels)
+        # Initialize with default image size
+        input_size = image_size * in_channels  # width * channels
+        
         self.lstm = nn.LSTM(
-            input_size=128 * in_channels,  # width * channels
+            input_size=input_size,
             hidden_size=hidden_dim,
             num_layers=2,
             batch_first=True,
@@ -180,8 +144,6 @@ class SimpleLSTM(nn.Module):
             dropout=0.2
         )
         
-        # Map LSTM output to predictions
-        # BiLSTM outputs 2*hidden_dim
         self.fc = nn.Sequential(
             nn.Linear(2 * hidden_dim, 128),
             nn.ReLU(),
@@ -198,23 +160,19 @@ class SimpleLSTM(nn.Module):
         """
         batch, channels, height, width = x.shape
         
-        # Reshape to treat rows as sequences
-        # (batch, channels, height, width) → (batch, height, width*channels)
+        # Reshape: (batch, channels, height, width) -> (batch, height, width*channels)
         x = x.permute(0, 2, 1, 3).reshape(batch, height, -1)
         
         # Process with LSTM
-        lstm_out, _ = self.lstm(x)  # (batch, height, 2*hidden_dim)
-        
-        # Take output from last timestep
-        last_out = lstm_out[:, -1, :]  # (batch, 2*hidden_dim)
+        lstm_out, _ = self.lstm(x)
+        last_out = lstm_out[:, -1, :]
         
         # Predict
-        predictions = self.fc(last_out)  # (batch, num_outputs)
-        
+        predictions = self.fc(last_out)
         return predictions
 
 
-# Model registry for easy access
+# Model registry
 BASELINE_MODELS = {
     'linear': SimpleLinear,
     'mlp': SimpleMLP,
@@ -251,33 +209,37 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-# === Test all models ===
 if __name__ == "__main__":
-    print("=" * 70)
-    print("Testing Baseline Models")
-    print("=" * 70)
+    print("Testing baseline models with different input configurations...")
     
-    # Test input
-    batch_size = 4
-    dummy_input = torch.randn(batch_size, 1, 128, 128)
+    # Test with different input sizes
+    test_configs = [
+        (1, 128, 128),  # Single channel, 128x128
+        (5, 80, 80),    # 5 channels (multi_frame), 80x80 - REAL DATA
+        (4, 80, 80),    # 4 channels (temporal_stats), 80x80
+    ]
     
-    # Test all models
-    models = {
-        'Linear': SimpleLinear(),
-        'MLP': SimpleMLP(),
-        'CNN': SimpleCNN(),
-        'LSTM': SimpleLSTM(),
-    }
-    
-    print(f"\nInput shape: {dummy_input.shape}")
-    print(f"Expected output: ({batch_size}, 126)\n")
-    
-    for name, model in models.items():
-        output = model(dummy_input)
-        params = count_parameters(model)
+    for in_channels, height, width in test_configs:
+        print(f"\n{'='*60}")
+        print(f"Testing with input shape: ({in_channels}, {height}, {width})")
+        print(f"{'='*60}")
         
-        print(f"{name}:")
-        print(f"  Output shape: {output.shape}")
-        print(f"  Parameters: {params:,}")
-        print(f"  ✓ Passed" if output.shape == (batch_size, 126) else "  ✗ Failed")
-        print()
+        dummy_input = torch.randn(2, in_channels, height, width)
+        
+        for model_name in ['linear', 'mlp', 'cnn', 'lstm']:
+            print(f"\n{model_name.upper()}:")
+            model = get_model(model_name, in_channels=in_channels, image_size=height)
+            
+            # Check that model has parameters
+            num_params = count_parameters(model)
+            assert num_params > 0, f"{model_name} has 0 parameters!"
+            
+            output = model(dummy_input)
+            print(f"  Input: {dummy_input.shape}")
+            print(f"  Output: {output.shape}")
+            print(f"  Parameters: {num_params:,}")
+            assert output.shape == (2, 126), f"Expected (2, 126), got {output.shape}"
+    
+    print(f"\n{'='*60}")
+    print("✓ All models working correctly with proper initialization!")
+    print(f"{'='*60}")

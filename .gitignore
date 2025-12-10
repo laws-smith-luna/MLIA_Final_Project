@@ -3,3 +3,4 @@ SequencerScripts/sequencer2d_m.pth
 SequencerScripts/sequencer2d_s.pth
 SequencerScripts/checkpoints/best_model.pth
 SequencerScripts/checkpoints/latest_checkpoint.pth
+SequencerScripts/2023-11-15-cine-myo-masks-and-TOS.npy
